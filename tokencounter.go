@@ -121,8 +121,6 @@ func (tc *TokenCounter) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	requestTokens := tc.countRequestTokens(&openAIReq)
-
 	respWriter := &responseWriter{
 		ResponseWriter: rw,
 		body:           &bytes.Buffer{},
@@ -135,13 +133,25 @@ func (tc *TokenCounter) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		var openAIResp OpenAIResponse
 		if err := json.Unmarshal(respWriter.body.Bytes(), &openAIResp); err != nil {
 			_, _ = os.Stderr.WriteString(fmt.Sprintf("TokenCounter: failed to parse OpenAI response: %v\n", err))
-		} else {
+			// Fall back to estimation if response parsing fails
+			requestTokens := tc.countRequestTokens(&openAIReq)
 			responseTokens := tc.countResponseTokens(&openAIResp)
+			rw.Header().Set(tc.requestTokenHeader, strconv.Itoa(requestTokens))
 			rw.Header().Set(tc.responseTokenHeader, strconv.Itoa(responseTokens))
+		} else {
+			// Use actual token counts from OpenAI response
+			if openAIResp.Usage.PromptTokens > 0 {
+				rw.Header().Set(tc.requestTokenHeader, strconv.Itoa(openAIResp.Usage.PromptTokens))
+			}
+			if openAIResp.Usage.CompletionTokens > 0 {
+				rw.Header().Set(tc.responseTokenHeader, strconv.Itoa(openAIResp.Usage.CompletionTokens))
+			}
 		}
+	} else {
+		// Fall back to estimation if response is not successful
+		requestTokens := tc.countRequestTokens(&openAIReq)
+		rw.Header().Set(tc.requestTokenHeader, strconv.Itoa(requestTokens))
 	}
-
-	rw.Header().Set(tc.requestTokenHeader, strconv.Itoa(requestTokens))
 }
 
 func (tc *TokenCounter) countRequestTokens(req *OpenAIRequest) int {

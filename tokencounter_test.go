@@ -31,7 +31,9 @@ func TestTokenCounter(t *testing.T) {
 				},
 			},
 		}
-		_ = json.NewEncoder(rw).Encode(response)
+		if err := json.NewEncoder(rw).Encode(response); err != nil {
+			t.Errorf("Failed to encode response: %v", err)
+		}
 	})
 
 	handler, err := New(ctx, next, cfg, "token-counter")
