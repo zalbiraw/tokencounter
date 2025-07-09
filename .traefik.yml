@@ -1,12 +1,11 @@
-displayName: Demo Plugin
+displayName: Token Counter Plugin
 type: middleware
 iconPath: .assets/icon.png
 
-import: github.com/traefik/plugindemo
+import: github.com/zalbiraw/tokencounter
 
-summary: '[Demo] Add Request Header'
+summary: '[Token Counter] Add Request and Response Token Count Headers'
 
 testData:
-  Headers:
-    X-Demo: test
-    X-URL: '{{URL}}'
+  requestTokenHeader: X-Request-Token-Count
+  responseTokenHeader: X-Response-Token-Count
