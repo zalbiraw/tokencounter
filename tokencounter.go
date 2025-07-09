@@ -53,6 +53,7 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 	}, nil
 }
 
+// OpenAIRequest represents an OpenAI Chat Completion API request.
 type OpenAIRequest struct {
 	Model    string `json:"model"`
 	Messages []struct {
@@ -62,11 +63,12 @@ type OpenAIRequest struct {
 	Stream bool `json:"stream,omitempty"`
 }
 
+// OpenAIResponse represents an OpenAI Chat Completion API response.
 type OpenAIResponse struct {
 	Usage struct {
-		PromptTokens     int `json:"prompt_tokens"`
-		CompletionTokens int `json:"completion_tokens"`
-		TotalTokens      int `json:"total_tokens"`
+		PromptTokens     int `json:"prompt_tokens"`     //nolint:tagliatelle
+		CompletionTokens int `json:"completion_tokens"` //nolint:tagliatelle
+		TotalTokens      int `json:"total_tokens"`      //nolint:tagliatelle
 	} `json:"usage"`
 	Choices []struct {
 		Message struct {
@@ -92,21 +94,21 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 }
 
 func (tc *TokenCounter) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
-	if req.Method != "POST" {
-		os.Stderr.WriteString(fmt.Sprintf("TokenCounter: bypassing non-POST request to %s\n", req.URL.Path))
+	if req.Method != http.MethodPost {
+		_, _ = os.Stderr.WriteString(fmt.Sprintf("TokenCounter: bypassing non-POST request to %s\n", req.URL.Path))
 		tc.next.ServeHTTP(rw, req)
 		return
 	}
 
 	if !strings.Contains(req.URL.Path, "/chat/completions") {
-		os.Stderr.WriteString(fmt.Sprintf("TokenCounter: bypassing non-chat-completions request to %s\n", req.URL.Path))
+		_, _ = os.Stderr.WriteString(fmt.Sprintf("TokenCounter: bypassing non-chat-completions request to %s\n", req.URL.Path))
 		tc.next.ServeHTTP(rw, req)
 		return
 	}
 
 	body, err := io.ReadAll(req.Body)
 	if err != nil {
-		os.Stderr.WriteString(fmt.Sprintf("TokenCounter: failed to read request body: %v\n", err))
+		_, _ = os.Stderr.WriteString(fmt.Sprintf("TokenCounter: failed to read request body: %v\n", err))
 		tc.next.ServeHTTP(rw, req)
 		return
 	}
@@ -114,25 +116,25 @@ func (tc *TokenCounter) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 	var openAIReq OpenAIRequest
 	if err := json.Unmarshal(body, &openAIReq); err != nil {
-		os.Stderr.WriteString(fmt.Sprintf("TokenCounter: failed to parse OpenAI request: %v\n", err))
+		_, _ = os.Stderr.WriteString(fmt.Sprintf("TokenCounter: failed to parse OpenAI request: %v\n", err))
 		tc.next.ServeHTTP(rw, req)
 		return
 	}
 
 	requestTokens := tc.countRequestTokens(&openAIReq)
-	
+
 	respWriter := &responseWriter{
 		ResponseWriter: rw,
 		body:           &bytes.Buffer{},
-		statusCode:     200,
+		statusCode:     http.StatusOK,
 	}
 
 	tc.next.ServeHTTP(respWriter, req)
 
-	if respWriter.statusCode == 200 {
+	if respWriter.statusCode == http.StatusOK {
 		var openAIResp OpenAIResponse
 		if err := json.Unmarshal(respWriter.body.Bytes(), &openAIResp); err != nil {
-			os.Stderr.WriteString(fmt.Sprintf("TokenCounter: failed to parse OpenAI response: %v\n", err))
+			_, _ = os.Stderr.WriteString(fmt.Sprintf("TokenCounter: failed to parse OpenAI response: %v\n", err))
 		} else {
 			responseTokens := tc.countResponseTokens(&openAIResp)
 			rw.Header().Set(tc.responseTokenHeader, strconv.Itoa(responseTokens))
@@ -144,16 +146,16 @@ func (tc *TokenCounter) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 func (tc *TokenCounter) countRequestTokens(req *OpenAIRequest) int {
 	totalTokens := 0
-	
+
 	for _, message := range req.Messages {
 		totalTokens += tc.estimateTokens(message.Content)
 		totalTokens += tc.estimateTokens(message.Role)
 		totalTokens += 4
 	}
-	
+
 	totalTokens += tc.estimateTokens(req.Model)
 	totalTokens += 2
-	
+
 	return totalTokens
 }
 
@@ -161,12 +163,12 @@ func (tc *TokenCounter) countResponseTokens(resp *OpenAIResponse) int {
 	if resp.Usage.CompletionTokens > 0 {
 		return resp.Usage.CompletionTokens
 	}
-	
+
 	totalTokens := 0
 	for _, choice := range resp.Choices {
 		totalTokens += tc.estimateTokens(choice.Message.Content)
 	}
-	
+
 	return totalTokens
 }
 
@@ -174,12 +176,12 @@ func (tc *TokenCounter) estimateTokens(text string) int {
 	if text == "" {
 		return 0
 	}
-	
+
 	text = strings.ToLower(text)
-	
+
 	words := 0
 	inWord := false
-	
+
 	for _, r := range text {
 		if unicode.IsLetter(r) || unicode.IsDigit(r) {
 			if !inWord {
@@ -190,12 +192,12 @@ func (tc *TokenCounter) estimateTokens(text string) int {
 			inWord = false
 		}
 	}
-	
+
 	tokens := int(float64(words) * 1.33)
-	
+
 	if tokens == 0 && len(text) > 0 {
 		tokens = 1
 	}
-	
+
 	return tokens
 }

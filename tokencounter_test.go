@@ -31,7 +31,7 @@ func TestTokenCounter(t *testing.T) {
 				},
 			},
 		}
-		json.NewEncoder(rw).Encode(response)
+		_ = json.NewEncoder(rw).Encode(response)
 	})
 
 	handler, err := New(ctx, next, cfg, "token-counter")
@@ -50,7 +50,10 @@ func TestTokenCounter(t *testing.T) {
 			},
 		},
 	}
-	bodyBytes, _ := json.Marshal(requestBody)
+	bodyBytes, err := json.Marshal(requestBody)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://localhost/v1/chat/completions", bytes.NewBuffer(bodyBytes))
 	if err != nil {
@@ -89,7 +92,7 @@ func TestTokenCounterBypassNonChatCompletions(t *testing.T) {
 
 	ctx := context.Background()
 	next := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
-		rw.WriteHeader(200)
+		rw.WriteHeader(http.StatusOK)
 	})
 
 	handler, err := New(ctx, next, cfg, "token-counter")
