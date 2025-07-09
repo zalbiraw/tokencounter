@@ -129,28 +129,38 @@ func (tc *TokenCounter) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 	tc.next.ServeHTTP(respWriter, req)
 
-	if respWriter.statusCode == http.StatusOK {
-		var openAIResp OpenAIResponse
-		if err := json.Unmarshal(respWriter.body.Bytes(), &openAIResp); err != nil {
-			_, _ = os.Stderr.WriteString(fmt.Sprintf("TokenCounter: failed to parse OpenAI response: %v\n", err))
-			// Fall back to estimation if response parsing fails
-			requestTokens := tc.countRequestTokens(&openAIReq)
-			responseTokens := tc.countResponseTokens(&openAIResp)
-			rw.Header().Set(tc.requestTokenHeader, strconv.Itoa(requestTokens))
-			rw.Header().Set(tc.responseTokenHeader, strconv.Itoa(responseTokens))
-		} else {
-			// Use actual token counts from OpenAI response
-			if openAIResp.Usage.PromptTokens > 0 {
-				rw.Header().Set(tc.requestTokenHeader, strconv.Itoa(openAIResp.Usage.PromptTokens))
-			}
-			if openAIResp.Usage.CompletionTokens > 0 {
-				rw.Header().Set(tc.responseTokenHeader, strconv.Itoa(openAIResp.Usage.CompletionTokens))
-			}
-		}
-	} else {
-		// Fall back to estimation if response is not successful
+	// Handle non-successful responses
+	if respWriter.statusCode != http.StatusOK {
 		requestTokens := tc.countRequestTokens(&openAIReq)
 		rw.Header().Set(tc.requestTokenHeader, strconv.Itoa(requestTokens))
+		return
+	}
+
+	// Parse OpenAI response
+	var openAIResp OpenAIResponse
+	if err := json.Unmarshal(respWriter.body.Bytes(), &openAIResp); err != nil {
+		_, _ = os.Stderr.WriteString(fmt.Sprintf("TokenCounter: failed to parse OpenAI response: %v\n", err))
+		tc.setEstimatedTokens(rw, &openAIReq, &openAIResp)
+		return
+	}
+
+	// Use actual token counts from OpenAI response
+	tc.setActualTokens(rw, &openAIResp)
+}
+
+func (tc *TokenCounter) setEstimatedTokens(rw http.ResponseWriter, req *OpenAIRequest, resp *OpenAIResponse) {
+	requestTokens := tc.countRequestTokens(req)
+	responseTokens := tc.countResponseTokens(resp)
+	rw.Header().Set(tc.requestTokenHeader, strconv.Itoa(requestTokens))
+	rw.Header().Set(tc.responseTokenHeader, strconv.Itoa(responseTokens))
+}
+
+func (tc *TokenCounter) setActualTokens(rw http.ResponseWriter, resp *OpenAIResponse) {
+	if resp.Usage.PromptTokens > 0 {
+		rw.Header().Set(tc.requestTokenHeader, strconv.Itoa(resp.Usage.PromptTokens))
+	}
+	if resp.Usage.CompletionTokens > 0 {
+		rw.Header().Set(tc.responseTokenHeader, strconv.Itoa(resp.Usage.CompletionTokens))
 	}
 }
 
