@@ -203,23 +203,31 @@ func (tc *TokenCounter) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	// Check if this is a cache hit - if so, use estimated tokens since OpenAI returns 0
 	cacheStatus := respWriter.Header().Get("X-Cache-Status")
 	log.Printf("TokenCounter: cache status = '%s'\n", cacheStatus)
+	
+	var finalBody []byte
 	if cacheStatus == "Hit" {
 		log.Printf("TokenCounter: using estimated tokens for cache hit\n")
-		tc.setEstimatedTokens(rw, &openAIReq, &simpleResp)
+		requestTokens := tc.countRequestTokens(&openAIReq)
+		responseTokens := tc.estimateResponseTokensFromBody(respWriter.body.Bytes())
+		tc.setEstimatedTokens(rw, &openAIReq, respWriter.body.Bytes())
+		
+		// Update the usage in the response body
+		finalBody = tc.updateUsageInResponse(respWriter.body.Bytes(), requestTokens, responseTokens)
 	} else {
 		log.Printf("TokenCounter: using actual tokens\n")
 		// Use actual token counts from OpenAI response
 		tc.setActualTokens(rw, &simpleResp)
+		finalBody = respWriter.body.Bytes()
 	}
 
 	// Write the response
 	rw.WriteHeader(respWriter.statusCode)
-	rw.Write(respWriter.body.Bytes())
+	rw.Write(finalBody)
 }
 
-func (tc *TokenCounter) setEstimatedTokens(rw http.ResponseWriter, req *SimpleRequest, resp *SimpleResponse) {
+func (tc *TokenCounter) setEstimatedTokens(rw http.ResponseWriter, req *SimpleRequest, respBody []byte) {
 	requestTokens := tc.countRequestTokens(req)
-	responseTokens := tc.countResponseTokens(resp)
+	responseTokens := tc.estimateResponseTokensFromBody(respBody)
 	log.Printf("TokenCounter: setting estimated tokens - request: %d, response: %d\n", requestTokens, responseTokens)
 	rw.Header().Set(tc.requestTokenHeader, strconv.Itoa(requestTokens))
 	rw.Header().Set(tc.responseTokenHeader, strconv.Itoa(responseTokens))
@@ -254,6 +262,57 @@ func (tc *TokenCounter) countRequestTokens(req *SimpleRequest) int {
 
 func (tc *TokenCounter) countResponseTokens(resp *SimpleResponse) int {
 	return resp.Usage.CompletionTokens
+}
+
+// FullResponse represents the complete OpenAI response structure for parsing content
+type FullResponse struct {
+	Choices []struct {
+		Message struct {
+			Content string `json:"content"`
+		} `json:"message"`
+	} `json:"choices"`
+}
+
+func (tc *TokenCounter) estimateResponseTokensFromBody(respBody []byte) int {
+	var fullResp FullResponse
+	if err := json.Unmarshal(respBody, &fullResp); err != nil {
+		log.Printf("TokenCounter: failed to parse full response for token estimation: %v\n", err)
+		return 0
+	}
+
+	totalTokens := 0
+	for _, choice := range fullResp.Choices {
+		totalTokens += tc.estimateTokens(choice.Message.Content)
+	}
+	
+	return totalTokens
+}
+
+func (tc *TokenCounter) updateUsageInResponse(respBody []byte, promptTokens, completionTokens int) []byte {
+	// Parse the response as a generic map to preserve all fields
+	var responseMap map[string]interface{}
+	if err := json.Unmarshal(respBody, &responseMap); err != nil {
+		log.Printf("TokenCounter: failed to parse response for usage update: %v\n", err)
+		return respBody
+	}
+
+	// Update the usage field
+	if usage, exists := responseMap["usage"]; exists {
+		if usageMap, ok := usage.(map[string]interface{}); ok {
+			usageMap["prompt_tokens"] = promptTokens
+			usageMap["completion_tokens"] = completionTokens
+			usageMap["total_tokens"] = promptTokens + completionTokens
+		}
+	}
+
+	// Marshal back to JSON
+	updatedBody, err := json.Marshal(responseMap)
+	if err != nil {
+		log.Printf("TokenCounter: failed to marshal updated response: %v\n", err)
+		return respBody
+	}
+
+	return updatedBody
 }
 
 func (tc *TokenCounter) estimateTokensFromContent(content MessageContent) int {
