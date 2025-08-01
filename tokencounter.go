@@ -53,28 +53,124 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 	}, nil
 }
 
+// MessageContent represents different types of content in a message
+type MessageContent interface{}
+
+// TextContent represents text content
+type TextContent struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+// ImageContent represents image content
+type ImageContent struct {
+	Type     string `json:"type"`
+	ImageURL struct {
+		URL    string `json:"url"`
+		Detail string `json:"detail,omitempty"`
+	} `json:"image_url"`
+}
+
+// ToolCall represents a tool call in a message
+type ToolCall struct {
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
+}
+
+// Message represents a message in the conversation
+type Message struct {
+	Role         string          `json:"role"`
+	Content      MessageContent  `json:"content,omitempty"`
+	Name         string          `json:"name,omitempty"`
+	ToolCalls    []ToolCall      `json:"tool_calls,omitempty"`
+	ToolCallID   string          `json:"tool_call_id,omitempty"`
+}
+
+// ResponseFormat represents the response format configuration
+type ResponseFormat struct {
+	Type       string `json:"type"`
+	JSONSchema *struct {
+		Name        string                 `json:"name"`
+		Description string                 `json:"description,omitempty"`
+		Schema      map[string]interface{} `json:"schema"`
+		Strict      bool                   `json:"strict,omitempty"`
+	} `json:"json_schema,omitempty"`
+}
+
+// Tool represents a tool available to the model
+type Tool struct {
+	Type     string `json:"type"`
+	Function struct {
+		Name        string                 `json:"name"`
+		Description string                 `json:"description,omitempty"`
+		Parameters  map[string]interface{} `json:"parameters,omitempty"`
+	} `json:"function"`
+}
+
+// ToolChoice represents how the model should use tools
+type ToolChoice interface{}
+
 // OpenAIRequest represents an OpenAI Chat Completion API request.
 type OpenAIRequest struct {
-	Model    string `json:"model"`
-	Messages []struct {
-		Role    string `json:"role"`
-		Content string `json:"content"`
-	} `json:"messages"`
-	Stream bool `json:"stream,omitempty"`
+	Model             string          `json:"model"`
+	Messages          []Message       `json:"messages"`
+	MaxTokens         *int            `json:"max_tokens,omitempty"`
+	Temperature       *float64        `json:"temperature,omitempty"`
+	TopP              *float64        `json:"top_p,omitempty"`
+	N                 *int            `json:"n,omitempty"`
+	Stream            *bool           `json:"stream,omitempty"`
+	Stop              interface{}     `json:"stop,omitempty"`
+	PresencePenalty   *float64        `json:"presence_penalty,omitempty"`
+	FrequencyPenalty  *float64        `json:"frequency_penalty,omitempty"`
+	LogitBias         map[string]int  `json:"logit_bias,omitempty"`
+	User              string          `json:"user,omitempty"`
+	ResponseFormat    *ResponseFormat `json:"response_format,omitempty"`
+	Seed              *int            `json:"seed,omitempty"`
+	Tools             []Tool          `json:"tools,omitempty"`
+	ToolChoice        ToolChoice      `json:"tool_choice,omitempty"`
+	ParallelToolCalls *bool           `json:"parallel_tool_calls,omitempty"`
+}
+
+// Usage represents token usage information
+type Usage struct {
+	PromptTokens     int `json:"prompt_tokens"`     //nolint:tagliatelle
+	CompletionTokens int `json:"completion_tokens"` //nolint:tagliatelle
+	TotalTokens      int `json:"total_tokens"`      //nolint:tagliatelle
+}
+
+// Choice represents a completion choice
+type Choice struct {
+	Index        int      `json:"index"`
+	Message      Message  `json:"message"`
+	Delta        *Message `json:"delta,omitempty"`
+	Logprobs     *struct {
+		Content []struct {
+			Token   string `json:"token"`
+			Logprob float64 `json:"logprob"`
+			Bytes   []int   `json:"bytes,omitempty"`
+			TopLogprobs []struct {
+				Token   string  `json:"token"`
+				Logprob float64 `json:"logprob"`
+				Bytes   []int   `json:"bytes,omitempty"`
+			} `json:"top_logprobs"`
+		} `json:"content"`
+	} `json:"logprobs,omitempty"`
+	FinishReason string `json:"finish_reason"`
 }
 
 // OpenAIResponse represents an OpenAI Chat Completion API response.
 type OpenAIResponse struct {
-	Usage struct {
-		PromptTokens     int `json:"prompt_tokens"`     //nolint:tagliatelle
-		CompletionTokens int `json:"completion_tokens"` //nolint:tagliatelle
-		TotalTokens      int `json:"total_tokens"`      //nolint:tagliatelle
-	} `json:"usage"`
-	Choices []struct {
-		Message struct {
-			Content string `json:"content"`
-		} `json:"message"`
-	} `json:"choices"`
+	ID                string  `json:"id"`
+	Object            string  `json:"object"`
+	Created           int64   `json:"created"`
+	Model             string  `json:"model"`
+	SystemFingerprint string  `json:"system_fingerprint,omitempty"`
+	Usage             Usage   `json:"usage"`
+	Choices           []Choice `json:"choices"`
 }
 
 type responseWriter struct {
@@ -168,7 +264,7 @@ func (tc *TokenCounter) countRequestTokens(req *OpenAIRequest) int {
 	totalTokens := 0
 
 	for _, message := range req.Messages {
-		totalTokens += tc.estimateTokens(message.Content)
+		totalTokens += tc.estimateTokensFromContent(message.Content)
 		totalTokens += tc.estimateTokens(message.Role)
 		totalTokens += 4
 	}
@@ -186,10 +282,39 @@ func (tc *TokenCounter) countResponseTokens(resp *OpenAIResponse) int {
 
 	totalTokens := 0
 	for _, choice := range resp.Choices {
-		totalTokens += tc.estimateTokens(choice.Message.Content)
+		totalTokens += tc.estimateTokensFromContent(choice.Message.Content)
 	}
 
 	return totalTokens
+}
+
+func (tc *TokenCounter) estimateTokensFromContent(content MessageContent) int {
+	if content == nil {
+		return 0
+	}
+
+	switch c := content.(type) {
+	case string:
+		return tc.estimateTokens(c)
+	case []interface{}:
+		totalTokens := 0
+		for _, item := range c {
+			if itemMap, ok := item.(map[string]interface{}); ok {
+				if itemType, exists := itemMap["type"]; exists && itemType == "text" {
+					if text, textExists := itemMap["text"]; textExists {
+						if textStr, ok := text.(string); ok {
+							totalTokens += tc.estimateTokens(textStr)
+						}
+					}
+				} else if itemType == "image_url" {
+					totalTokens += 85
+				}
+			}
+		}
+		return totalTokens
+	default:
+		return 0
+	}
 }
 
 func (tc *TokenCounter) estimateTokens(text string) int {
