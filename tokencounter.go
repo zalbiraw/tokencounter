@@ -224,10 +224,17 @@ func (tc *TokenCounter) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 	tc.next.ServeHTTP(respWriter, req)
 
+	// Copy headers from wrapped response to original response
+	for key, values := range respWriter.Header() {
+		for _, value := range values {
+			rw.Header().Set(key, value)
+		}
+	}
+
 	// Handle non-successful responses
 	if respWriter.statusCode != http.StatusOK {
-		requestTokens := tc.countRequestTokens(&openAIReq)
-		rw.Header().Set(tc.requestTokenHeader, strconv.Itoa(requestTokens))
+		rw.WriteHeader(respWriter.statusCode)
+		_, _ = rw.Write(respWriter.body.Bytes())
 		return
 	}
 
@@ -235,6 +242,8 @@ func (tc *TokenCounter) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	var openAIResp OpenAIResponse
 	if err := json.Unmarshal(respWriter.body.Bytes(), &openAIResp); err != nil {
 		log.Printf("TokenCounter: failed to parse OpenAI response: %v\n", err)
+		rw.WriteHeader(respWriter.statusCode)
+		_, _ = rw.Write(respWriter.body.Bytes())
 		return
 	}
 
@@ -249,6 +258,10 @@ func (tc *TokenCounter) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		// Use actual token counts from OpenAI response
 		tc.setActualTokens(rw, &openAIResp)
 	}
+
+	// Write the status code and body
+	rw.WriteHeader(respWriter.statusCode)
+	_, _ = rw.Write(respWriter.body.Bytes())
 }
 
 func (tc *TokenCounter) setEstimatedTokens(rw http.ResponseWriter, req *OpenAIRequest, resp *OpenAIResponse) {
