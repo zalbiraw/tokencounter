@@ -1,31 +1,25 @@
 // Package tokencounter a token counter plugin for OpenAI Chat Completion API.
 package tokencounter
 
-// import (
-// 	"bytes"
-// 	"context"
-// 	"encoding/json"
-// 	"io"
-// 	"log"
-// 	"net/http"
-// 	"strconv"
-// 	"strings"
-// 	"unicode"
-// )
+import (
+	"bytes"
+	"context"
+	"net/http"
+)
 
-// // Config the plugin configuration.
-// type Config struct {
-// 	RequestTokenHeader  string `json:"requestTokenHeader,omitempty"`
-// 	ResponseTokenHeader string `json:"responseTokenHeader,omitempty"`
-// }
+// Config the plugin configuration.
+type Config struct {
+	RequestTokenHeader  string `json:"requestTokenHeader,omitempty"`
+	ResponseTokenHeader string `json:"responseTokenHeader,omitempty"`
+}
 
-// // CreateConfig creates the default plugin configuration.
-// func CreateConfig() *Config {
-// 	return &Config{
-// 		RequestTokenHeader:  "X-Request-Token-Count",
-// 		ResponseTokenHeader: "X-Response-Token-Count",
-// 	}
-// }
+// CreateConfig creates the default plugin configuration.
+func CreateConfig() *Config {
+	return &Config{
+		RequestTokenHeader:  "X-Request-Token-Count",
+		ResponseTokenHeader: "X-Response-Token-Count",
+	}
+}
 
 // // TokenCounter a token counter plugin.
 // type TokenCounter struct {
@@ -280,12 +274,6 @@ package tokencounter
 // 	return tokens
 // }
 
-import (
-	"bytes"
-	"context"
-	"net/http"
-)
-
 // responseWriter wraps http.ResponseWriter to capture the response for transformation
 type responseWriter struct {
 	http.ResponseWriter
@@ -309,8 +297,9 @@ func (rw *responseWriter) WriteHeader(code int) {
 // Proxy represents the main plugin instance that handles request transformation.
 // It contains all the necessary components for transforming requests and responses.
 type Proxy struct {
-	next http.Handler // Next handler in the middleware chain
-	name string       // Plugin instance name
+	next   http.Handler // Next handler in the middleware chain
+	config *Config      // Plugin configuration
+	name   string       // Plugin instance name
 }
 
 // New creates a new Proxy plugin instance.
@@ -324,8 +313,9 @@ type Proxy struct {
 // Returns the configured plugin handler or an error if configuration is invalid.
 func New(ctx context.Context, next http.Handler, name string) (http.Handler, error) {
 	return &Proxy{
-		next: next,
-		name: name,
+		next:   next,
+		config: CreateConfig(),
+		name:   name,
 	}, nil
 }
 
