@@ -308,13 +308,14 @@ type Proxy struct {
 // Parameters:
 //   - ctx: Context for the plugin initialization
 //   - next: Next HTTP handler in the middleware chain
+//   - config: Plugin configuration
 //   - name: Name of the plugin instance
 //
 // Returns the configured plugin handler or an error if configuration is invalid.
-func New(ctx context.Context, next http.Handler, name string) (http.Handler, error) {
+func New(ctx context.Context, next http.Handler, config *Config, name string) (http.Handler, error) {
 	return &Proxy{
 		next:   next,
-		config: CreateConfig(),
+		config: config,
 		name:   name,
 	}, nil
 }
