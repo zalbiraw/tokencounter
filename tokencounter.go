@@ -83,11 +83,11 @@ type ToolCall struct {
 
 // Message represents a message in the conversation
 type Message struct {
-	Role         string          `json:"role"`
-	Content      MessageContent  `json:"content,omitempty"`
-	Name         string          `json:"name,omitempty"`
-	ToolCalls    []ToolCall      `json:"tool_calls,omitempty"`
-	ToolCallID   string          `json:"tool_call_id,omitempty"`
+	Role       string         `json:"role"`
+	Content    MessageContent `json:"content,omitempty"`
+	Name       string         `json:"name,omitempty"`
+	ToolCalls  []ToolCall     `json:"tool_calls,omitempty"`
+	ToolCallID string         `json:"tool_call_id,omitempty"`
 }
 
 // ResponseFormat represents the response format configuration
@@ -144,14 +144,14 @@ type Usage struct {
 
 // Choice represents a completion choice
 type Choice struct {
-	Index        int      `json:"index"`
-	Message      Message  `json:"message"`
-	Delta        *Message `json:"delta,omitempty"`
-	Logprobs     *struct {
+	Index    int      `json:"index"`
+	Message  Message  `json:"message"`
+	Delta    *Message `json:"delta,omitempty"`
+	Logprobs *struct {
 		Content []struct {
-			Token   string `json:"token"`
-			Logprob float64 `json:"logprob"`
-			Bytes   []int   `json:"bytes,omitempty"`
+			Token       string  `json:"token"`
+			Logprob     float64 `json:"logprob"`
+			Bytes       []int   `json:"bytes,omitempty"`
 			TopLogprobs []struct {
 				Token   string  `json:"token"`
 				Logprob float64 `json:"logprob"`
@@ -164,12 +164,12 @@ type Choice struct {
 
 // OpenAIResponse represents an OpenAI Chat Completion API response.
 type OpenAIResponse struct {
-	ID                string  `json:"id"`
-	Object            string  `json:"object"`
-	Created           int64   `json:"created"`
-	Model             string  `json:"model"`
-	SystemFingerprint string  `json:"system_fingerprint,omitempty"`
-	Usage             Usage   `json:"usage"`
+	ID                string   `json:"id"`
+	Object            string   `json:"object"`
+	Created           int64    `json:"created"`
+	Model             string   `json:"model"`
+	SystemFingerprint string   `json:"system_fingerprint,omitempty"`
+	Usage             Usage    `json:"usage"`
 	Choices           []Choice `json:"choices"`
 }
 
@@ -236,12 +236,17 @@ func (tc *TokenCounter) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	var openAIResp OpenAIResponse
 	if err := json.Unmarshal(respWriter.body.Bytes(), &openAIResp); err != nil {
 		_, _ = os.Stderr.WriteString(fmt.Sprintf("TokenCounter: failed to parse OpenAI response: %v\n", err))
-		tc.setEstimatedTokens(rw, &openAIReq, &openAIResp)
 		return
 	}
 
-	// Use actual token counts from OpenAI response
-	tc.setActualTokens(rw, &openAIResp)
+	// Check if this is a cache hit - if so, use estimated tokens since OpenAI returns 0
+	cacheStatus := respWriter.Header().Get("X-Cache-Status")
+	if cacheStatus == "Hit" {
+		tc.setEstimatedTokens(rw, &openAIReq, &openAIResp)
+	} else {
+		// Use actual token counts from OpenAI response
+		tc.setActualTokens(rw, &openAIResp)
+	}
 }
 
 func (tc *TokenCounter) setEstimatedTokens(rw http.ResponseWriter, req *OpenAIRequest, resp *OpenAIResponse) {
