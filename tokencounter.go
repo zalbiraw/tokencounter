@@ -5,10 +5,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
+	"log"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"unicode"
@@ -191,20 +190,20 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 
 func (tc *TokenCounter) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost {
-		_, _ = os.Stderr.WriteString(fmt.Sprintf("TokenCounter: bypassing non-POST request to %s\n", req.URL.Path))
+		log.Printf("TokenCounter: bypassing non-POST request to %s\n", req.URL.Path)
 		tc.next.ServeHTTP(rw, req)
 		return
 	}
 
 	if !strings.Contains(req.URL.Path, "/chat/completions") {
-		_, _ = os.Stderr.WriteString(fmt.Sprintf("TokenCounter: bypassing non-chat-completions request to %s\n", req.URL.Path))
+		log.Printf("TokenCounter: bypassing non-chat-completions request to %s\n", req.URL.Path)
 		tc.next.ServeHTTP(rw, req)
 		return
 	}
 
 	body, err := io.ReadAll(req.Body)
 	if err != nil {
-		_, _ = os.Stderr.WriteString(fmt.Sprintf("TokenCounter: failed to read request body: %v\n", err))
+		log.Printf("TokenCounter: failed to read request body: %v\n", err)
 		tc.next.ServeHTTP(rw, req)
 		return
 	}
@@ -212,7 +211,7 @@ func (tc *TokenCounter) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 	var openAIReq OpenAIRequest
 	if err := json.Unmarshal(body, &openAIReq); err != nil {
-		_, _ = os.Stderr.WriteString(fmt.Sprintf("TokenCounter: failed to parse OpenAI request: %v\n", err))
+		log.Printf("TokenCounter: failed to parse OpenAI request: %v\n", err)
 		tc.next.ServeHTTP(rw, req)
 		return
 	}
@@ -235,15 +234,18 @@ func (tc *TokenCounter) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	// Parse OpenAI response
 	var openAIResp OpenAIResponse
 	if err := json.Unmarshal(respWriter.body.Bytes(), &openAIResp); err != nil {
-		_, _ = os.Stderr.WriteString(fmt.Sprintf("TokenCounter: failed to parse OpenAI response: %v\n", err))
+		log.Printf("TokenCounter: failed to parse OpenAI response: %v\n", err)
 		return
 	}
 
 	// Check if this is a cache hit - if so, use estimated tokens since OpenAI returns 0
 	cacheStatus := respWriter.Header().Get("X-Cache-Status")
+	log.Printf("TokenCounter: cache status = '%s'\n", cacheStatus)
 	if cacheStatus == "Hit" {
+		log.Printf("TokenCounter: using estimated tokens for cache hit\n")
 		tc.setEstimatedTokens(rw, &openAIReq, &openAIResp)
 	} else {
+		log.Printf("TokenCounter: using actual tokens\n")
 		// Use actual token counts from OpenAI response
 		tc.setActualTokens(rw, &openAIResp)
 	}
@@ -252,11 +254,13 @@ func (tc *TokenCounter) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 func (tc *TokenCounter) setEstimatedTokens(rw http.ResponseWriter, req *OpenAIRequest, resp *OpenAIResponse) {
 	requestTokens := tc.countRequestTokens(req)
 	responseTokens := tc.countResponseTokens(resp)
+	log.Printf("TokenCounter: setting estimated tokens - request: %d, response: %d\n", requestTokens, responseTokens)
 	rw.Header().Set(tc.requestTokenHeader, strconv.Itoa(requestTokens))
 	rw.Header().Set(tc.responseTokenHeader, strconv.Itoa(responseTokens))
 }
 
 func (tc *TokenCounter) setActualTokens(rw http.ResponseWriter, resp *OpenAIResponse) {
+	log.Printf("TokenCounter: setting actual tokens - prompt: %d, completion: %d\n", resp.Usage.PromptTokens, resp.Usage.CompletionTokens)
 	if resp.Usage.PromptTokens > 0 {
 		rw.Header().Set(tc.requestTokenHeader, strconv.Itoa(resp.Usage.PromptTokens))
 	}
