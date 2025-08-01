@@ -257,6 +257,7 @@ func (tc *TokenCounter) setEstimatedTokens(rw http.ResponseWriter, req *OpenAIRe
 	log.Printf("TokenCounter: setting estimated tokens - request: %d, response: %d\n", requestTokens, responseTokens)
 	rw.Header().Set(tc.requestTokenHeader, strconv.Itoa(requestTokens))
 	rw.Header().Set(tc.responseTokenHeader, strconv.Itoa(responseTokens))
+	log.Printf("TokenCounter: headers set - %s: %s, %s: %s\n", tc.requestTokenHeader, rw.Header().Get(tc.requestTokenHeader), tc.responseTokenHeader, rw.Header().Get(tc.responseTokenHeader))
 }
 
 func (tc *TokenCounter) setActualTokens(rw http.ResponseWriter, resp *OpenAIResponse) {
@@ -267,6 +268,7 @@ func (tc *TokenCounter) setActualTokens(rw http.ResponseWriter, resp *OpenAIResp
 	if resp.Usage.CompletionTokens > 0 {
 		rw.Header().Set(tc.responseTokenHeader, strconv.Itoa(resp.Usage.CompletionTokens))
 	}
+	log.Printf("TokenCounter: headers set - %s: %s, %s: %s\n", tc.requestTokenHeader, rw.Header().Get(tc.requestTokenHeader), tc.responseTokenHeader, rw.Header().Get(tc.responseTokenHeader))
 }
 
 func (tc *TokenCounter) countRequestTokens(req *OpenAIRequest) int {
