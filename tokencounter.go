@@ -113,25 +113,10 @@ type Tool struct {
 // ToolChoice represents how the model should use tools
 type ToolChoice interface{}
 
-// OpenAIRequest represents an OpenAI Chat Completion API request.
-type OpenAIRequest struct {
-	Model             string          `json:"model"`
-	Messages          []Message       `json:"messages"`
-	MaxTokens         *int            `json:"max_tokens,omitempty"`
-	Temperature       *float64        `json:"temperature,omitempty"`
-	TopP              *float64        `json:"top_p,omitempty"`
-	N                 *int            `json:"n,omitempty"`
-	Stream            *bool           `json:"stream,omitempty"`
-	Stop              interface{}     `json:"stop,omitempty"`
-	PresencePenalty   *float64        `json:"presence_penalty,omitempty"`
-	FrequencyPenalty  *float64        `json:"frequency_penalty,omitempty"`
-	LogitBias         map[string]int  `json:"logit_bias,omitempty"`
-	User              string          `json:"user,omitempty"`
-	ResponseFormat    *ResponseFormat `json:"response_format,omitempty"`
-	Seed              *int            `json:"seed,omitempty"`
-	Tools             []Tool          `json:"tools,omitempty"`
-	ToolChoice        ToolChoice      `json:"tool_choice,omitempty"`
-	ParallelToolCalls *bool           `json:"parallel_tool_calls,omitempty"`
+// SimpleRequest represents minimal OpenAI request fields needed for token counting
+type SimpleRequest struct {
+	Model    string    `json:"model"`
+	Messages []Message `json:"messages"`
 }
 
 // Usage represents token usage information
@@ -141,35 +126,9 @@ type Usage struct {
 	TotalTokens      int `json:"total_tokens"`      //nolint:tagliatelle
 }
 
-// Choice represents a completion choice
-type Choice struct {
-	Index    int      `json:"index"`
-	Message  Message  `json:"message"`
-	Delta    *Message `json:"delta,omitempty"`
-	Logprobs *struct {
-		Content []struct {
-			Token       string  `json:"token"`
-			Logprob     float64 `json:"logprob"`
-			Bytes       []int   `json:"bytes,omitempty"`
-			TopLogprobs []struct {
-				Token   string  `json:"token"`
-				Logprob float64 `json:"logprob"`
-				Bytes   []int   `json:"bytes,omitempty"`
-			} `json:"top_logprobs"`
-		} `json:"content"`
-	} `json:"logprobs,omitempty"`
-	FinishReason string `json:"finish_reason"`
-}
-
-// OpenAIResponse represents an OpenAI Chat Completion API response.
-type OpenAIResponse struct {
-	ID                string   `json:"id"`
-	Object            string   `json:"object"`
-	Created           int64    `json:"created"`
-	Model             string   `json:"model"`
-	SystemFingerprint string   `json:"system_fingerprint,omitempty"`
-	Usage             Usage    `json:"usage"`
-	Choices           []Choice `json:"choices"`
+// SimpleResponse represents a minimal OpenAI response for token counting
+type SimpleResponse struct {
+	Usage Usage `json:"usage"`
 }
 
 type responseWriter struct {
@@ -209,7 +168,7 @@ func (tc *TokenCounter) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 	req.Body = io.NopCloser(bytes.NewBuffer(body))
 
-	var openAIReq OpenAIRequest
+	var openAIReq SimpleRequest
 	if err := json.Unmarshal(body, &openAIReq); err != nil {
 		log.Printf("TokenCounter: failed to parse OpenAI request: %v\n", err)
 		tc.next.ServeHTTP(rw, req)
@@ -229,9 +188,9 @@ func (tc *TokenCounter) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// Parse OpenAI response
-	var openAIResp OpenAIResponse
-	if err := json.Unmarshal(respWriter.body.Bytes(), &openAIResp); err != nil {
+	// Parse OpenAI response (only usage field)
+	var simpleResp SimpleResponse
+	if err := json.Unmarshal(respWriter.body.Bytes(), &simpleResp); err != nil {
 		log.Printf("TokenCounter: failed to parse OpenAI response: %v\n", err)
 		return
 	}
@@ -241,15 +200,15 @@ func (tc *TokenCounter) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	log.Printf("TokenCounter: cache status = '%s'\n", cacheStatus)
 	if cacheStatus == "Hit" {
 		log.Printf("TokenCounter: using estimated tokens for cache hit\n")
-		tc.setEstimatedTokens(respWriter, &openAIReq, &openAIResp)
+		tc.setEstimatedTokens(respWriter, &openAIReq, &simpleResp)
 	} else {
 		log.Printf("TokenCounter: using actual tokens\n")
 		// Use actual token counts from OpenAI response
-		tc.setActualTokens(respWriter, &openAIResp)
+		tc.setActualTokens(respWriter, &simpleResp)
 	}
 }
 
-func (tc *TokenCounter) setEstimatedTokens(rw http.ResponseWriter, req *OpenAIRequest, resp *OpenAIResponse) {
+func (tc *TokenCounter) setEstimatedTokens(rw http.ResponseWriter, req *SimpleRequest, resp *SimpleResponse) {
 	requestTokens := tc.countRequestTokens(req)
 	responseTokens := tc.countResponseTokens(resp)
 	log.Printf("TokenCounter: setting estimated tokens - request: %d, response: %d\n", requestTokens, responseTokens)
@@ -258,7 +217,7 @@ func (tc *TokenCounter) setEstimatedTokens(rw http.ResponseWriter, req *OpenAIRe
 	log.Printf("TokenCounter: headers set - %s: %s, %s: %s\n", tc.requestTokenHeader, rw.Header().Get(tc.requestTokenHeader), tc.responseTokenHeader, rw.Header().Get(tc.responseTokenHeader))
 }
 
-func (tc *TokenCounter) setActualTokens(rw http.ResponseWriter, resp *OpenAIResponse) {
+func (tc *TokenCounter) setActualTokens(rw http.ResponseWriter, resp *SimpleResponse) {
 	log.Printf("TokenCounter: setting actual tokens - prompt: %d, completion: %d\n", resp.Usage.PromptTokens, resp.Usage.CompletionTokens)
 	if resp.Usage.PromptTokens > 0 {
 		rw.Header().Set(tc.requestTokenHeader, strconv.Itoa(resp.Usage.PromptTokens))
@@ -269,7 +228,7 @@ func (tc *TokenCounter) setActualTokens(rw http.ResponseWriter, resp *OpenAIResp
 	log.Printf("TokenCounter: headers set - %s: %s, %s: %s\n", tc.requestTokenHeader, rw.Header().Get(tc.requestTokenHeader), tc.responseTokenHeader, rw.Header().Get(tc.responseTokenHeader))
 }
 
-func (tc *TokenCounter) countRequestTokens(req *OpenAIRequest) int {
+func (tc *TokenCounter) countRequestTokens(req *SimpleRequest) int {
 	totalTokens := 0
 
 	for _, message := range req.Messages {
@@ -284,17 +243,8 @@ func (tc *TokenCounter) countRequestTokens(req *OpenAIRequest) int {
 	return totalTokens
 }
 
-func (tc *TokenCounter) countResponseTokens(resp *OpenAIResponse) int {
-	if resp.Usage.CompletionTokens > 0 {
-		return resp.Usage.CompletionTokens
-	}
-
-	totalTokens := 0
-	for _, choice := range resp.Choices {
-		totalTokens += tc.estimateTokensFromContent(choice.Message.Content)
-	}
-
-	return totalTokens
+func (tc *TokenCounter) countResponseTokens(resp *SimpleResponse) int {
+	return resp.Usage.CompletionTokens
 }
 
 func (tc *TokenCounter) estimateTokensFromContent(content MessageContent) int {
